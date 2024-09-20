@@ -31,6 +31,10 @@ func NewDB(dbPath string) (*DB, error) {
 	}, nil
 }
 
+func FxNewDB(cfg *Config) (*DB, error) {
+	return NewDB(cfg.DbLocation)
+}
+
 func (d *DB) Migrate() error {
 	_, err := d.db.Exec(`
 		CREATE TABLE IF NOT EXISTS files (

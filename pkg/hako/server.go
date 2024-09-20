@@ -10,14 +10,16 @@ import (
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/fx"
 )
 
 type Server struct {
 	router *gin.Engine
+	config *Config
 	done   chan struct{}
 }
 
-func NewServer(db *DB, fs FS) *Server {
+func NewServer(db *DB, fs FS, cfg *Config) *Server {
 	r := gin.Default()
 
 	// Handle file uploads via PUT
@@ -32,6 +34,18 @@ func NewServer(db *DB, fs FS) *Server {
 		ttl, err := ParseExpiry(expiry)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parsing expiry: %s", err)})
+			return
+		}
+
+		// Check if the expiry is within the allowed range
+		if ttl > cfg.FsMaxTTL {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("expiry too long (max %s)", cfg.FsMaxTTL)})
+			return
+		}
+
+		// Check if the file size is within the allowed range
+		if c.Request.ContentLength > cfg.FsMaxFileSize {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("file too large (max %d bytes)", cfg.FsMaxFileSize)})
 			return
 		}
 
@@ -112,12 +126,12 @@ func NewServer(db *DB, fs FS) *Server {
 		http.ServeContent(c.Writer, c.Request, file.OriginalFilename, time.Now(), readSeeker)
 	})
 
-	return &Server{router: r, done: make(chan struct{})}
+	return &Server{router: r, config: cfg, done: make(chan struct{})}
 }
 
 func (s *Server) Run(ctx context.Context) {
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    s.config.HttpListenAddr,
 		Handler: s.router.Handler(),
 	}
 
@@ -142,4 +156,23 @@ func (s *Server) Run(ctx context.Context) {
 // Done returns a channel that will be closed when the server has stopped.
 func (s *Server) Done() <-chan struct{} {
 	return s.done
+}
+
+// FxNewServer is a constructor for the Server type that is compatible with
+// the fx framework.
+func FxNewServer(db *DB, fs FS, cfg *Config, lc fx.Lifecycle) *Server {
+	server := NewServer(db, fs, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			go server.Run(ctx)
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			cancel()
+			<-server.Done()
+			return nil
+		},
+	})
+	return server
 }

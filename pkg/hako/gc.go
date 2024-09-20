@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"go.uber.org/fx"
 )
 
 type GC struct {
@@ -78,4 +80,24 @@ func (g *GC) RunGC(ctx context.Context) (int, error) {
 // is done.
 func (g *GC) Done() <-chan struct{} {
 	return g.done
+}
+
+// FxNewGC creates a new GC instance for Fx.
+func FxNewGC(db *DB, fs FS, lc fx.Lifecycle) *GC {
+	gc := NewGC(db, fs)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			go gc.LoopForever(ctx)
+			return nil
+		},
+		OnStop: func(context.Context) error {
+			cancel()
+			<-gc.Done()
+			return nil
+		},
+	})
+
+	return gc
 }

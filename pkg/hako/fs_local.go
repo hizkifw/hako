@@ -21,6 +21,10 @@ func NewLocalFS(root string) (FS, error) {
 	return &LocalFS{Root: root}, nil
 }
 
+func FxNewLocalFS(config *Config) (FS, error) {
+	return NewLocalFS(config.FsRoot)
+}
+
 // ReadFile implements FS.
 func (l *LocalFS) ReadFile(filename string) (io.ReadSeeker, error) {
 	filePath := filepath.Join(l.Root, filename)
