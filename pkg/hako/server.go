@@ -2,16 +2,21 @@ package hako
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
 )
+
+//go:embed web
+var webContent embed.FS
 
 type Server struct {
 	router *gin.Engine
@@ -27,24 +32,27 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 		// Get expiry from the query string, if it exists
 		expiry := c.Query("expiry")
 		if expiry == "" {
-			expiry = "1h"
+			expiry = "24h"
 		}
 
 		// Parse the expiry
 		ttl, err := ParseExpiry(expiry)
 		if err != nil {
+			log.Printf("parsing expiry: %s", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parsing expiry: %s", err)})
 			return
 		}
 
 		// Check if the expiry is within the allowed range
 		if ttl > cfg.FsMaxTTL {
+			log.Printf("expiry too long (max %s)", cfg.FsMaxTTL)
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("expiry too long (max %s)", cfg.FsMaxTTL)})
 			return
 		}
 
 		// Check if the file size is within the allowed range
 		if c.Request.ContentLength > cfg.FsMaxFileSize {
+			log.Printf("file too large (%d > %d)", c.Request.ContentLength, cfg.FsMaxFileSize)
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("file too large (max %d bytes)", cfg.FsMaxFileSize)})
 			return
 		}
@@ -56,7 +64,6 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 			return
 		}
 
-		// Save the file to the database
 		fileName := c.Param("name")
 		contentType := c.GetHeader("Content-Type")
 		expiresAt := time.Now().Add(ttl)
@@ -80,6 +87,7 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 			contentType = mime.String()
 		}
 
+		// Save the file to the database
 		id, err := db.CreateFile(filePath, fileName, contentType, expiresAt, clientIP, userAgent)
 		if err != nil {
 			// Delete the file from the filesystem if saving to the database fails
@@ -87,13 +95,34 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("creating file record: %s", err)})
 		}
 
-		c.JSON(http.StatusOK, gin.H{"id": id})
+		idStr := strconv.FormatInt(id, 36)
+		c.JSON(http.StatusOK, gin.H{"id": idStr, "expires_at": expiresAt})
+	})
+
+	// Handle root path
+	r.GET("/", func(c *gin.Context) {
+		c.FileFromFS("web/", http.FS(webContent))
 	})
 
 	// Handle file downloads via GET
 	r.GET("/:id", func(c *gin.Context) {
+		// Check if we can serve the web contents
+		fname := c.Param("id")
+		_, err := webContent.Open("web/" + fname)
+		if err == nil {
+			c.FileFromFS("web/"+fname, http.FS(webContent))
+			log.Printf("Serving web content: %s", fname)
+			return
+		}
+
+		// Strip the file extension
+		extIdx := strings.Index(fname, ".")
+		if extIdx != -1 {
+			fname = fname[:extIdx]
+		}
+
 		// Get the file from the database
-		fileId, err := strconv.ParseInt(c.Param("id"), 10, 64)
+		fileId, err := strconv.ParseInt(fname, 36, 64)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file ID"})
 			return
@@ -121,6 +150,7 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 		// Set the response headers
 		c.Header("Content-Type", file.MimeType)
 		c.Header("Content-Disposition", "inline; filename=\""+file.OriginalFilename+"\"")
+		c.Header("X-Hako-Expires-At", file.ExpiresAt.Format(time.RFC3339))
 
 		// Serve the file
 		http.ServeContent(c.Writer, c.Request, file.OriginalFilename, time.Now(), readSeeker)
