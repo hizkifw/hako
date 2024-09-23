@@ -63,6 +63,18 @@ func (g *GC) RunGC(ctx context.Context) (int, error) {
 		default:
 		}
 
+		// Check file reference count
+		refs, err := g.db.RefCount(expired.FilePath)
+		if err != nil {
+			log.Printf("[GC] Failed to get reference count for file %d (%s): %v", expired.ID, expired.FilePath, err)
+			continue
+		}
+
+		// File is still referenced, skip
+		if refs > 0 {
+			continue
+		}
+
 		// Delete the file
 		if err := g.fs.DeleteFile(expired.FilePath); err != nil {
 			log.Printf("[GC] Failed to delete file %d (%s): %v", expired.ID, expired.FilePath, err)

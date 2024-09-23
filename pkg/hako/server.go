@@ -121,13 +121,14 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 			fname = fname[:extIdx]
 		}
 
-		// Get the file from the database
+		// Parse file ID
 		fileId, err := strconv.ParseInt(fname, 36, 64)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid file ID"})
 			return
 		}
 
+		// Get the file from the database
 		file, err := db.GetFile(fileId)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
@@ -135,7 +136,7 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 		}
 
 		// Check if the file has expired
-		if file.ExpiresAt.Before(time.Now()) {
+		if file.ExpiresAt.Before(time.Now()) || file.Removed {
 			c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
 			return
 		}

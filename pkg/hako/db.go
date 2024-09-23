@@ -141,3 +141,21 @@ func (d *DB) RemoveFile(id int64) error {
 
 	return nil
 }
+
+// RefCount returns the number of references to a file in the database.
+func (d *DB) RefCount(fileName string) (int, error) {
+	var count int
+	err := d.db.QueryRow(
+		`SELECT COUNT(*) FROM files
+		WHERE file_path = ?
+		AND removed = FALSE
+		AND expires_at > ?`,
+		fileName,
+		time.Now().UnixMilli(),
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get reference count: %v", err)
+	}
+
+	return count, nil
+}
