@@ -186,6 +186,16 @@
         <p>Or paste an image with <kbd>Ctrl</kbd><kbd>v</kbd></p>
       </section>
       <section>
+        <p>Or paste text into the box and hit upload:</p>
+        <textarea
+          id="paste"
+          rows="4"
+          placeholder="Paste anything here…"
+          style="width: 100%; font: inherit; padding: 0.5em"
+        ></textarea>
+        <button id="pasteSubmit">Upload</button>
+      </section>
+      <section>
         <p>
           Or upload via the terminal:
           <code class="curl" style="margin: 0.5em 0">
@@ -258,9 +268,35 @@
             });
           });
 
+        // Handle pasted text upload
+        document
+          .querySelector("#pasteSubmit")
+          .addEventListener("click", function () {
+            const ta = document.querySelector("#paste");
+            const text = ta.value;
+            if (!text) {
+              return;
+            }
+
+            const blob = new Blob([text], { type: "text/plain" });
+            blob.name = "paste-" + Date.now() + ".txt";
+            uploadBlob(blob, blob.name).then(() => {
+              ta.value = "";
+            });
+          });
+
         // https://htmldom.dev/paste-an-image-from-the-clipboard/
         // Handle the `paste` event
         document.addEventListener("paste", function (evt) {
+          // Skip if the paste lands in the textarea below — the user
+          // intends to fill the box and hit upload, not auto-upload.
+          if (
+            evt.target &&
+            (evt.target.tagName === "TEXTAREA" ||
+              evt.target.tagName === "INPUT")
+          ) {
+            return;
+          }
           // Get the data of clipboard
           const clipboardItems = evt.clipboardData.items;
           const items = [].slice
