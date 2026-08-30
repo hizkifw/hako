@@ -72,13 +72,13 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 
 		// If content type is empty, sniff the content type from the file
 		if contentType == "" {
-			file, err := fs.ReadFile(filePath)
+			reader, err := fs.ReadFile(filePath)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("opening file for mime type: %s", err)})
 				return
 			}
 
-			mime, err := mimetype.DetectReader(file)
+			mime, err := mimetype.DetectReader(reader)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("detecting mime type: %s", err)})
 				return
@@ -104,8 +104,8 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 		c.FileFromFS("web/", http.FS(webContent))
 	})
 
-	// Handle file downloads via GET
-	r.GET("/:id", func(c *gin.Context) {
+	// Handle file downloads via GET/HEAD
+	serveFile := func(c *gin.Context) {
 		// Check if we can serve the web contents
 		fname := c.Param("id")
 		_, err := webContent.Open("web/" + fname)
@@ -155,7 +155,9 @@ func NewServer(db *DB, fs FS, cfg *Config) *Server {
 
 		// Serve the file
 		http.ServeContent(c.Writer, c.Request, file.OriginalFilename, time.Now(), readSeeker)
-	})
+	}
+	r.GET("/:id", serveFile)
+	r.HEAD("/:id", serveFile)
 
 	return &Server{router: r, config: cfg, done: make(chan struct{})}
 }
